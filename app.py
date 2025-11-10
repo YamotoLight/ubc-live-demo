@@ -1,4 +1,4 @@
-﻿# app.py — UBC LIVE (3 routes) with TransLink status line (no table column)
+﻿# app.py — UBC LIVE (3 routes) with TransLink status line + big numbers
 from __future__ import annotations
 import os
 import math
@@ -10,6 +10,15 @@ import requests
 
 # ================== STREAMLIT SETUP ==================
 st.set_page_config(page_title="UBC LIVE — Bus lineup waits", layout="wide")
+
+# safe autorefresh: try to use built-in, otherwise no-op
+if hasattr(st, "autorefresh"):
+    st.autorefresh(interval=30 * 1000, key="data_refresh")
+else:
+    # define a dummy so later code won't break if you call it
+    def autorefresh(*args, **kwargs):
+        pass
+
 st.title("UBC LIVE — Bus lineup waits")
 st.caption("2-week simulated baseline (5–10 obs per 30-min block per day) + user reports. Live TransLink ETA shown under each title. All waits in minutes.")
 
@@ -210,14 +219,23 @@ for i, route in enumerate(ROUTES):
         cur_label, cur_idx = current_block_label_and_index()
         if cur_label is not None:
             cur_stats = summarize_slot(route["key"], cur_idx)
-            est_cur = fmt(cur_stats["combined_mean"])
+            est_cur_num = cur_stats["combined_mean"]
+            est_cur = fmt(est_cur_num)
         else:
+            est_cur_num = None
             est_cur = "—"
 
-        # Status line under the title (this replaces the table column)
-        tl_str = "—" if tl_wait is None else f"{int(round(tl_wait))} min"
+        # ===== BIG NUMBERS =====
+        m1, m2 = st.columns(2)
+        with m1:
+            st.metric(label="Est. wait (this block)", value=est_cur)
+        with m2:
+            tl_str = "—" if tl_wait is None else f"{int(round(tl_wait))} min"
+            st.metric(label="Bus ETA", value=tl_str)
+
+        # Status line under the metrics
         cur_label = cur_label or "—"
-        st.caption(f"Current window: {cur_label}  •  Estimated wait: {est_cur}  •  Bus arrives in: {tl_str}")
+        st.caption(f"Current window: {cur_label}")
 
         # Build the per-stop table (no TransLink column)
         records = []
@@ -236,4 +254,4 @@ for i, route in enumerate(ROUTES):
         df_show = pd.DataFrame(records)
         st.dataframe(df_show, use_container_width=True, hide_index=True)
 
-st.info("TransLink ETA is shown only in the status line. If it shows “—”, no live countdown was returned for that stop/time.")
+st.info("TransLink ETA is shown in the metric above. If it shows “—”, no live countdown was returned for that stop/time.")
