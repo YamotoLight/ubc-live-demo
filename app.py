@@ -15,9 +15,9 @@ st.caption("2-week simulated baseline (5–10 obs per 30-min block per day) + us
 # ================== CONFIG ==================
 # just stopNo now
 ROUTES = [
-    {"key": "R4",  "label": "R4 to Joyce",    "base_mean": 6.0, "base_sd": 1.5, "stopNo": "60162"},
-    {"key": "99",  "label": "99 B-Line",      "base_mean": 8.0, "base_sd": 2.0, "stopNo": "61395"},  # example
-    {"key": "25",  "label": "25 Brentwood",   "base_mean": 5.0, "base_sd": 1.2, "stopNo": "50330"},
+    {"key": "R4",  "label": "R4 to Joyce",  "base_mean": 6.0, "base_sd": 1.5, "stopNo": "60162"},
+    {"key": "99",  "label": "99 B-Line",    "base_mean": 8.0, "base_sd": 2.0, "stopNo": "61395"},  # example
+    {"key": "25",  "label": "25 Brentwood", "base_mean": 5.0, "base_sd": 1.2, "stopNo": "50330"},
 ]
 
 START_HOUR = 8
@@ -41,7 +41,10 @@ def make_slots():
     slot_id = 0
     for h in range(START_HOUR, END_HOUR):
         for m in (0, 30):
-            label = f"{h:02d}:{m:02d}–{h:02d}:{(m+30)%60:02d}"
+            # fix end time so 08:30 -> 09:00
+            end_h = h if m == 0 else h + 1
+            end_m = (m + 30) % 60
+            label = f"{h:02d}:{m:02d}–{end_h:02d}:{end_m:02d}"
             slots.append({"slot_id": slot_id, "label": label, "hour": h, "minute": m})
             slot_id += 1
     return slots
@@ -125,10 +128,10 @@ def fetch_translink_wait(stop_no: str) -> float | None:
         return None
     try:
         url = f"https://api.translink.ca/rttiapi/v1/stops/{stop_no}/estimates?apiKey={TRANSLINK_API_KEY}"
-        r = requests.get(url, timeout=5)
+        r = requests.get(url, timeout=5, headers={"accept": "application/json"})
         if r.status_code == 200:
             data = r.json()
-            # data is usually a list of route objects; pick the first schedule of the first route
+            # data is list of routes at that stop
             if data and data[0].get("Schedules"):
                 mins = data[0]["Schedules"][0].get("ExpectedCountdown")
                 if mins is not None:
@@ -207,4 +210,5 @@ for i, route in enumerate(ROUTES):
         st.dataframe(df_show, use_container_width=True, hide_index=True)
 
 st.info(
-    "TransLink column now shown. If it's blank, it means the real time API isn't happening in this time block."
+    "TransLink column now shown. If it's blank, it means the real-time API didn't return a countdown for that stop."
+)
