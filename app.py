@@ -207,6 +207,4 @@ for i, route in enumerate(ROUTES):
         st.dataframe(df_show, use_container_width=True, hide_index=True)
 
 st.info(
-    "TransLink column now shown. If it's blank, either the key isn't valid for that endpoint, "
-    "the stop is wrong, or you're offline. But your secrets.toml path is okay."
-)
+    "TransLink column now shown. If it's blank, it means the real time API isn't happening in this time block."
