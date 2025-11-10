@@ -1,7 +1,8 @@
-﻿# app.py — UBC LIVE (3 routes) with TransLink by stop ONLY
+﻿# app.py — UBC LIVE (3 routes) with TransLink status line (no table column)
 from __future__ import annotations
 import os
 import math
+from datetime import datetime, timedelta
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -10,13 +11,12 @@ import requests
 # ================== STREAMLIT SETUP ==================
 st.set_page_config(page_title="UBC LIVE — Bus lineup waits", layout="wide")
 st.title("UBC LIVE — Bus lineup waits")
-st.caption("2-week simulated baseline (5–10 obs per 30-min block per day) + user reports + TransLink shown. All waits in minutes.")
+st.caption("2-week simulated baseline (5–10 obs per 30-min block per day) + user reports. Live TransLink ETA shown under each title. All waits in minutes.")
 
 # ================== CONFIG ==================
-# just stopNo now
 ROUTES = [
     {"key": "R4",  "label": "R4 to Joyce",  "base_mean": 6.0, "base_sd": 1.5, "stopNo": "60162"},
-    {"key": "99",  "label": "99 B-Line",    "base_mean": 8.0, "base_sd": 2.0, "stopNo": "61395"},  # example
+    {"key": "99",  "label": "99 B-Line",    "base_mean": 8.0, "base_sd": 2.0, "stopNo": "61395"},
     {"key": "25",  "label": "25 Brentwood", "base_mean": 5.0, "base_sd": 1.2, "stopNo": "50330"},
 ]
 
@@ -41,7 +41,6 @@ def make_slots():
     slot_id = 0
     for h in range(START_HOUR, END_HOUR):
         for m in (0, 30):
-            # fix end time so 08:30 -> 09:00
             end_h = h if m == 0 else h + 1
             end_m = (m + 30) % 60
             label = f"{h:02d}:{m:02d}–{end_h:02d}:{end_m:02d}"
@@ -61,6 +60,23 @@ def slot_demand_multiplier(hour: int) -> float:
     else:
         return 0.9
 
+# ----- current block helpers (for the status line) -----
+def current_block_label_and_index():
+    now = datetime.now()
+    day_start = datetime(now.year, now.month, now.day, START_HOUR, 0)
+    day_end   = datetime(now.year, now.month, now.day, END_HOUR, 0)
+    if not (day_start <= now < day_end):
+        return None, None
+    mins = int((now - day_start).total_seconds() // 60)
+    idx = mins // 30
+    start_dt = day_start + timedelta(minutes=idx * 30)
+    end_dt   = start_dt + timedelta(minutes=30)
+    label = f"{start_dt.hour:02d}:{start_dt.minute:02d}–{end_dt.hour:02d}:{end_dt.minute:02d}"
+    return label, idx
+
+def fmt(x):
+    return "—" if (x is None or (isinstance(x, float) and (math.isnan(x) or math.isinf(x)))) else f"{x:.2f}"
+
 # ================== BASELINE SIM ==================
 def simulate_baseline():
     rows = []
@@ -68,7 +84,7 @@ def simulate_baseline():
     for route in ROUTES:
         for day in range(1, NUM_DAYS + 1):
             for slot in SLOTS:
-                n_obs = rng.integers(OBS_MIN, OBS_MAX + 1)  # 5–10 per day per block
+                n_obs = rng.integers(OBS_MIN, OBS_MAX + 1)
                 mult = slot_demand_multiplier(slot["hour"])
                 mu = route["base_mean"] * mult
                 sd = route["base_sd"]
@@ -78,7 +94,6 @@ def simulate_baseline():
                     rows.append(
                         {
                             "route_key": route["key"],
-                            "route_label": route["label"],
                             "day": day,
                             "slot_id": slot["slot_id"],
                             "slot_label": slot["label"],
@@ -131,7 +146,6 @@ def fetch_translink_wait(stop_no: str) -> float | None:
         r = requests.get(url, timeout=5, headers={"accept": "application/json"})
         if r.status_code == 200:
             data = r.json()
-            # data is list of routes at that stop
             if data and data[0].get("Schedules"):
                 mins = data[0]["Schedules"][0].get("ExpectedCountdown")
                 if mins is not None:
@@ -176,11 +190,11 @@ def summarize_slot(route_key: str, slot_id: int):
     return {
         "base_n": int(base_n),
         "user_n": int(user_n),
-        "combined_mean": round(float(combined_mean), 2) if not math.isnan(combined_mean) else None,
-        "ci_low": round(float(ci_low), 2) if not math.isnan(ci_low) else None,
-        "ci_high": round(float(ci_high), 2) if not math.isnan(ci_high) else None,
-        "pi_low": round(float(pi_low), 2) if not math.isnan(pi_low) else None,
-        "pi_high": round(float(pi_high), 2) if not math.isnan(pi_high) else None,
+        "combined_mean": float(combined_mean) if not math.isnan(combined_mean) else None,
+        "ci_low": float(ci_low) if not math.isnan(ci_low) else None,
+        "ci_high": float(ci_high) if not math.isnan(ci_high) else None,
+        "pi_low": float(pi_low) if not math.isnan(pi_low) else None,
+        "pi_high": float(pi_high) if not math.isnan(pi_high) else None,
     }
 
 # ================== UI ==================
@@ -189,9 +203,23 @@ for i, route in enumerate(ROUTES):
     with cols[i]:
         st.subheader(route["label"])
 
-        # 1 TransLink fetch per route, by stop only
+        # Live TransLink (one call per route)
         tl_wait = fetch_translink_wait(route["stopNo"])
 
+        # Current 30-min window + estimated wait for that window
+        cur_label, cur_idx = current_block_label_and_index()
+        if cur_label is not None:
+            cur_stats = summarize_slot(route["key"], cur_idx)
+            est_cur = fmt(cur_stats["combined_mean"])
+        else:
+            est_cur = "—"
+
+        # Status line under the title (this replaces the table column)
+        tl_str = "—" if tl_wait is None else f"{int(round(tl_wait))} min"
+        cur_label = cur_label or "—"
+        st.caption(f"Current window: {cur_label}  •  Estimated wait: {est_cur}  •  Bus arrives in: {tl_str}")
+
+        # Build the per-stop table (no TransLink column)
         records = []
         for slot in SLOTS:
             stats = summarize_slot(route["key"], slot["slot_id"])
@@ -200,15 +228,12 @@ for i, route in enumerate(ROUTES):
                     "Time block": slot["label"],
                     "Baseline n": stats["base_n"],
                     "User n": stats["user_n"],
-                    "Est. wait (min)": stats["combined_mean"],
-                    "95% CI": f"{stats['ci_low']}–{stats['ci_high']}" if stats["ci_low"] is not None else "",
-                    "95% PI": f"{stats['pi_low']}–{stats['pi_high']}" if stats["pi_low"] is not None else "",
-                    "TransLink (min)": tl_wait if tl_wait is not None else "",
+                    "Est. wait (min)": None if stats["combined_mean"] is None else round(stats["combined_mean"], 2),
+                    "95% CI": "" if stats["ci_low"] is None else f"{round(stats['ci_low'],2)}–{round(stats['ci_high'],2)}",
+                    "95% PI": "" if stats["pi_low"] is None else f"{round(stats['pi_low'],2)}–{round(stats['pi_high'],2)}",
                 }
             )
         df_show = pd.DataFrame(records)
         st.dataframe(df_show, use_container_width=True, hide_index=True)
 
-st.info(
-    "TransLink column now shown. If it's blank, it means the real-time API didn't return a countdown for that stop."
-)
+st.info("TransLink ETA is shown only in the status line. If it shows “—”, no live countdown was returned for that stop/time.")
