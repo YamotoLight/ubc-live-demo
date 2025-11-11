@@ -1,12 +1,16 @@
-﻿# app.py — UBC LIVE (3 routes) with TransLink status line + big numbers
+﻿# app.py — UBC LIVE (3 routes) with TransLink status line + big numbers, Vancouver time
 from __future__ import annotations
 import os
 import math
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo  # <-- for Vancouver time
 import numpy as np
 import pandas as pd
 import streamlit as st
 import requests
+
+# ================== TIMEZONE ==================
+LOCAL_TZ = ZoneInfo("America/Vancouver")
 
 # ================== STREAMLIT SETUP ==================
 st.set_page_config(page_title="UBC LIVE — Bus lineup waits", layout="wide")
@@ -71,9 +75,10 @@ def slot_demand_multiplier(hour: int) -> float:
 
 # ----- current block helpers (for the status line) -----
 def current_block_label_and_index():
-    now = datetime.now()
-    day_start = datetime(now.year, now.month, now.day, START_HOUR, 0)
-    day_end   = datetime(now.year, now.month, now.day, END_HOUR, 0)
+    # use Vancouver time
+    now = datetime.now(LOCAL_TZ)
+    day_start = datetime(now.year, now.month, now.day, START_HOUR, 0, tzinfo=LOCAL_TZ)
+    day_end   = datetime(now.year, now.month, now.day, END_HOUR, 0, tzinfo=LOCAL_TZ)
     if not (day_start <= now < day_end):
         return None, None
     mins = int((now - day_start).total_seconds() // 60)
@@ -215,7 +220,7 @@ for i, route in enumerate(ROUTES):
         # Live TransLink (one call per route)
         tl_wait = fetch_translink_wait(route["stopNo"])
 
-        # Current 30-min window + estimated wait for that window
+        # Current 30-min window + estimated wait for that window (Vancouver time)
         cur_label, cur_idx = current_block_label_and_index()
         if cur_label is not None:
             cur_stats = summarize_slot(route["key"], cur_idx)
